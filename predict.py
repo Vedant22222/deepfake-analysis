@@ -1,80 +1,43 @@
-import os
-import sys
-from typing import Tuple
-
 import numpy as np
-import tensorflow as tf
-from PIL import Image
+import cv2
+from tflite_runtime.interpreter import Interpreter
 
+# 1. Load the TFLite model globally so it stays in memory (Cache this in app.py if possible)
+interpreter = Interpreter(model_path="deepfake_model.tflite")
+interpreter.allocate_tensors()
 
-MODEL_PATH = "deepfake_model.h5"
-IMG_SIZE: Tuple[int, int] = (224, 224)
+# 2. Get the input and output node details from the model
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
+def predict_image(image_path):
+    # Get the required input shape for your specific model (e.g., 224x224 or 256x256)
+    input_shape = input_details[0]['shape']
+    target_height, target_width = input_shape[1], input_shape[2]
+    
+    # Read and preprocess the image using OpenCV
+    img = cv2.imread(image_path)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = cv2.resize(img, (target_width, target_height))
+    
+    # Convert to float32 array
+    img_array = np.array(img, dtype=np.float32)
+    
+    # Normalize the pixels (Important: check if your original model used /255.0 scaling)
+    img_array = img_array / 255.0
+    
+    # Add the batch dimension so shape becomes (1, height, width, channels)
+    input_data = np.expand_dims(img_array, axis=0)
 
-def load_model(model_path: str = MODEL_PATH) -> tf.keras.Model:
-    """Load the saved Keras model from disk."""
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(
-            f"Model file not found: '{model_path}'. Train first using train.py."
-        )
-    return tf.keras.models.load_model(model_path, compile=False)
+    # 3. Feed the image into the TFLite model
+    interpreter.set_tensor(input_details[0]['index'], input_data)
 
+    # 4. Run the prediction
+    interpreter.invoke()
 
-def preprocess_image(image: Image.Image) -> np.ndarray:
-    """
-    Preprocess a PIL image to match training:
-    - Resize to (224, 224)
-    - Normalize by dividing by 255
-    """
-    image = image.convert("RGB")
-    image = image.resize(IMG_SIZE)
-
-    arr = np.asarray(image).astype("float32") / 255.0
-    arr = np.expand_dims(arr, axis=0)  # shape: (1, 224, 224, 3)
-    return arr
-
-
-def predict_image(image: Image.Image, model: tf.keras.Model) -> Tuple[str, float]:
-    """
-    Predict "Real" or "Fake" from a PIL image.
-
-    Returns:
-        (label, prediction_value)
-    """
-    x = preprocess_image(image)
-    pred = model.predict(x, verbose=0)
-    pred_value = float(pred[0][0])
-
-    # Requirement:
-    # if prediction > 0.5 → Fake
-    # else → Real
-    label = "Fake" if pred_value > 0.5 else "Real"
-    return label, pred_value
-
-
-def main() -> None:
-    if len(sys.argv) != 2:
-        print("Usage: python predict.py <path_to_image>")
-        raise SystemExit(1)
-
-    image_path = sys.argv[1]
-    if not os.path.exists(image_path):
-        print(f"Image not found: {image_path}")
-        raise SystemExit(1)
-
-    model = load_model()
-
-    try:
-        image = Image.open(image_path)
-    except Exception:
-        print(f"Invalid image file: {image_path}")
-        raise SystemExit(1)
-
-    label, pred_value = predict_image(image, model=model)
-    print(f"Prediction value: {pred_value:.6f}")
-    print(f"Result: {label}")
-
-
-if __name__ == "__main__":
-    main()
-
+    # 5. Extract the result
+    output_data = interpreter.get_tensor(output_details[0]['index'])
+    
+    # Assuming a binary classification (e.g., Fake vs Real)
+    confidence = output_data[0][0]
+    return confidence

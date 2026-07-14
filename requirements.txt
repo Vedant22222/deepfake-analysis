@@ -1,8 +1,7 @@
-tensorflow
 streamlit
-numpy
-pillow
-opencv-python
-requests
-reportlab
+tflite-runtime
+opencv-python-headless
 easyocr
+reportlab
+numpy
+Pillow
